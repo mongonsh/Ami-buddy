@@ -155,13 +155,14 @@ export default function HomeworkUpload({ route, navigation }) {
         await updateDoc(userRef, {
           homeworkCount: increment(1)
         });
+
         console.log('Homework session saved');
       }
     } catch (e) {
       console.error("Error saving homework:", e);
       Alert.alert('Error', 'Failed to save homework history');
     }
-    navigation.navigate('Dashboard');
+    setShowSuccessModal(false);
   };
 
   const formatTime = (seconds) => {
@@ -885,7 +886,7 @@ export default function HomeworkUpload({ route, navigation }) {
               style={styles.modalButton}
               onPress={saveAndNavigate}
             >
-              <Text style={styles.modalButtonText}>{t('returnHome') || 'Return to Home'}</Text>
+              <Text style={styles.modalButtonText}>{t('close') || 'Close'}</Text>
             </TouchableOpacity>
           </View>
         </View>

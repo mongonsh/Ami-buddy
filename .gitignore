@@ -14,3 +14,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 venv/
+
+# Secrets & Keys
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.cer
+*.crt
+*.pfx
+service-account*.json
+credentials.json
+client_secret.json
+id_rsa
+id_dsa
+*.keystore
+google-services.json
+GoogleService-Info.plist
