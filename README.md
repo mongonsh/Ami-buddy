@@ -1,50 +1,165 @@
-# AmiBuddy - AI Homework Assistant for Children
+# AmiBuddy - AI 子供向け宿題アシスタント
 
-An interactive React Native app that transforms children's drawings into AI-powered homework assistants. Kids create their own character, upload homework, and have voice conversations with their personalized AI buddy.
+子供の落書きをAI搭載の宿題アシスタントに変える、インタラクティブな React Native アプリです。子供たちは自分だけのキャラクターを作り、宿題をアップロードし、パーソナライズされたAIの相棒と音声で会話することができます。
 
-[watch demo video デモ動画ご覧ください](https://www.youtube.com/watch?v=QcsDyxEWHzc)
-[![watch demo video](https://img.youtube.com/vi/QcsDyxEWHzc/maxresdefault.jpg)](https://www.youtube.com/watch?v=QcsDyxEWHzc)
+[デモ動画をご覧ください](https://www.youtube.com/watch?v=IoeVV8_tQiw)
+[![watch demo video](https://img.youtube.com/vi/IoeVV8_tQiw/maxresdefault.jpg)](https://www.youtube.com/watch?v=IoeVV8_tQiw)
 
-## ✨ Features
+## 🏗️ アーキテクチャ (Architecture)
 
-### 🎬 Video Splash Screen
-- Professional loading video on app start
-- Smooth fade-out transition
-- Auto-plays `loadingvideo.mp4`
+AmiBuddyは、React Native (Frontend) と Python/FastAPI (Backend) を組み合わせたハイブリッド構成です。
 
-### 🎨 Character Creation
-- Upload a drawing to create a personalized AI character
-- Name your character
-- Character introduces itself with voice
-- Animated character with bounce, breathing, and speaking effects
+```mermaid
+graph LR
+    subgraph Frontend ["フロントエンド (React Native / Expo)"]
+        direction TB
+        MobileClient["📱 モバイルアプリ"]
+        WebClient["💻 Webアプリ"]
+    end
 
-### 📚 Homework Analysis
-- Upload homework images
-- AI analyzes and explains homework in child-friendly Japanese
-- Identifies topics and difficulty level
-- Voice description by your character
+    subgraph Firebase_Services ["Firebase PaaS"]
+        direction TB
+        Auth["AUTH 🔐 (認証)"]
+        Firestore["DB 📄 (データ)"]
+        Storage["STORAGE ☁️ (画像)"]
+    end
 
-### 🎤 Voice Conversation
-- Ask questions about homework using voice
-- Speech-to-text powered by Google Gemini
-- AI answers in context of the homework
-- Text-to-speech responses with ElevenLabs
-- Conversation history with chat bubbles
+    subgraph Cloud_Run ["バックエンド (Cloud Run)"]
+        direction TB
+        OrchestratorAPI["🚀 APIサーバー"]
+        SAM2["🧩 SAM 2 (切り抜き)"]
+        RiggingAgent["🦴 リギング (骨格)"]
+    end
 
-### 🧠 Memory & Learning
-- MemU agentic memory framework integration
-- Stores character creation, homework sessions, and conversations
-- Tracks learning progress and topics covered
-- Retrieves relevant memories for context-aware responses
+    subgraph External_AI ["外部 AI サービス"]
+        direction TB
+        Gemini["✨ Gemini (視覚/推論)"]
+        ElevenLabs["🗣️ ElevenLabs (音声)"]
+    end
 
-### 🎨 Child-Friendly Design
-- Bright, playful color palette (sky blue, sunny yellow, coral pink, happy green)
-- Large 3D buttons with shadows
-- Decorative elements (stars, sparkles)
-- Clear visual hierarchy
-- Smooth animations
+    %% Key Data Flows
+    Frontend --> Auth
+    Frontend --> Firestore
+    Frontend --> Storage
+    
+    %% Direct AI Calls (Vision / Voice)
+    Frontend -.->|直接呼び出し| Gemini
+    Frontend -.->|直接呼び出し| ElevenLabs
 
-## 🚀 Quick Start
+    %% Heavy Processing Flow
+    Frontend ==>|画像アップロード| OrchestratorAPI
+    
+    OrchestratorAPI --> SAM2
+    OrchestratorAPI --> RiggingAgent
+    RiggingAgent -.->|構造解析| Gemini
+
+    %% Styling - HIGH CONTRAST DARK MODE
+    classDef mobile fill:#0277bd,stroke:#01579b,stroke-width:2px,color:#fff;
+    classDef cloud fill:#ef6c00,stroke:#e65100,stroke-width:2px,color:#fff;
+    classDef ai fill:#7b1fa2,stroke:#4a148c,stroke-width:2px,color:#fff;
+    classDef firebase fill:#c62828,stroke:#b71c1c,stroke-width:2px,color:#fff;
+
+    class MobileClient,WebClient mobile;
+    class OrchestratorAPI,SAM2,RiggingAgent cloud;
+    class Gemini,ElevenLabs ai;
+    class Auth,Firestore,Storage firebase;
+```
+
+---
+
+## 🔄 ワークフロー (Workflows)
+
+### 1. キャラクター作成 ("Live Animation" Pipeline)
+
+落書きから動くキャラクターを生成するプロセスです。**Gemini** が骨格を特定し、**SAM 2** がパーツを切り抜きます。
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 ユーザー
+    participant API as 🚀 Backend API
+    participant Gemini as ✨ Gemini
+    participant SAM2 as 🤖 SAM 2
+    participant Storage as ☁️ Storage
+
+    Note over User, API: 画像アップロード
+    User->>Storage: 描画画像を保存
+    User->>API: 解析リクエスト
+
+    Note over API, Gemini: 構造解析
+    API->>Gemini: "関節とパーツはどこ？"
+    Gemini-->>API: 骨格データ (JSON)
+
+    Note over API, SAM2: アセット生成
+    loop 各パーツ
+        API->>SAM2: マスク生成リクエスト
+        SAM2-->>API: 高精度マスク
+        API->>Storage: パーツ画像保存
+    end
+
+    API-->>User: リグデータ + パーツURL
+    Note over User: ライブレンダリング開始
+```
+
+### 2. 宿題サポート ("Study Buddy" Pipeline)
+
+**Gemini Vision** で問題を読み取り、**ElevenLabs** でキャラクターの声で解説します。
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 ユーザー
+    participant Gemini as ✨ Gemini (Vision)
+    participant Eleven as 🗣️ ElevenLabs
+
+    User->>User: 宿題を撮影
+    User->>Gemini: 画像 + "これ教えて"
+    Gemini-->>User: 解説テキスト生成
+    
+    User->>Eleven: テキスト読み上げリクエスト
+    Eleven-->>User: 音声データ
+    User->>User: キャラクターが喋る
+```
+
+---
+
+## ✨ 機能 (Features)
+
+### 🎬 ビデオ・スプラッシュスクリーン
+- アプリ起動時にプロフェッショナルなローディング動画を再生
+- スムーズなフェードアウト移行
+
+### 🎨 キャラクター作成
+- 描いた絵をアップロードして、自分だけのAIキャラクターを作成
+- キャラクターに名前を付ける
+- キャラクターが声で自己紹介
+- バウンス、呼吸、発話エフェクト付きのアニメーションキャラクター
+
+### 📚 宿題分析
+- 宿題の画像をアップロード
+- AIが子供向けの日本語で宿題を分析・解説
+- トピックと難易度を特定
+- キャラクターによる音声解説
+
+### 🎤 音声会話
+- 声を使って宿題について質問
+- Google Geminiによる音声認識（Speech-to-text）
+- 宿題の文脈に沿ったAI回答
+- ElevenLabsによるテキスト読み上げ（Text-to-speech）
+- 吹き出し付きの会話履歴
+
+### 🧠 記憶 & 学習 (MemU)
+- エージェントメモリフレームワーク「MemU」との統合
+- キャラクター作成、宿題セッション、会話の保存
+- 学習の進捗とカバーしたトピックの追跡
+- 文脈を考慮した応答のための関連メモリの検索
+
+### 🎨 子供向けデザイン
+- 明るく遊び心のあるカラーパレット（スカイブルー、サニーイエロー、コーラルピンク、ハッピーグリーン）
+- 影付きの大きな3Dボタン
+- 装飾要素（星、キラキラ）
+- 明確な視覚的階層
+- スムーズなアニメーション
+
+## 🚀 クイックスタート (Quick Start)
 
 ```bash
 # Install dependencies
@@ -56,179 +171,63 @@ npm start
 # Press 'i' for iOS simulator
 ```
 
-## � How It Works
-
-### Step 1: Create Your Character
-1. Upload a drawing image
-2. Enter a character name
-3. Character introduces itself: "こんにちは、わたしは {name} です。しゅくだいの がぞうを いれてください。"
-
-### Step 2: Upload Homework
-1. Select homework image from gallery or files
-2. AI analyzes the homework using Gemini Vision
-3. Character explains the homework with voice
-
-### Step 3: Ask Questions
-1. Tap the microphone button
-2. Ask questions about the homework
-3. AI transcribes your voice and provides answers
-4. Character speaks the answer back to you
-
-## 🛠️ Technologies
+## 🛠️ 技術スタック (Technologies)
 
 ### AI & ML
-- **Google Gemini 2.5 Flash** - Vision analysis and conversation
-- **ElevenLabs** - Japanese text-to-speech
-- **MemU** - Agentic memory framework
-- **SAM (Segment Anything)** - Drawing segmentation
+- **Google Gemini 2.5 Flash** - 視覚分析と会話
+- **ElevenLabs** - 日本語テキスト読み上げ
+- **MemU** - エージェントメモリフレームワーク
+- **SAM (Segment Anything)** - 描画のセグメンテーション
 
 ### Frontend
-- **React Native** - Cross-platform mobile framework
-- **Expo** - Development platform
-- **TypeScript** - Type-safe code
-- **Lucide React Native** - Icon library
+- **React Native** - クロスプラットフォームモバイルフレームワーク (Expo)
+- **TypeScript** - 型安全なコード
+- **Reanimated / Skia** - 高性能アニメーション
 
 ### Services
-- Voice conversation with speech-to-text
-- Image analysis with vision AI
-- Memory storage and retrieval
-- Character animation system
+- 音声認識・合成による音声会話
+- ビジョンAIによる画像分析
+- メモリの保存と検索
+- キャラクターアニメーションシステム
 
-## 📂 Project Structure
+## 📂 プロジェクト構造 (Project Structure)
 
 ```
 amibuddy/
 ├── src/
-│   ├── screens/
-│   │   ├── Dashboard.js              # Home screen with logo
-│   │   ├── CameraScreen.tsx          # Camera/gallery selection
-│   │   ├── LocalGallery.js           # Local image gallery
-│   │   ├── CharacterCreation.js      # Character naming & intro
-│   │   └── HomeworkUpload.js         # Homework analysis & conversation
-│   ├── components/
-│   │   └── AnimatedCharacter.js      # Animated character component
-│   ├── services/
-│   │   ├── geminiService.ts          # Gemini vision & AI
-│   │   ├── elevenLabsService.ts      # Text-to-speech
-│   │   ├── voiceConversationService.ts # Speech-to-text & conversation
-│   │   ├── memuService.ts            # Memory framework
-│   │   └── visionService.ts          # Drawing segmentation
-│   ├── navigation/
-│   │   └── AppNavigator.js           # Navigation setup
-│   └── theme/
-│       └── colors.js                 # Color palette
-├── public/
-│   ├── drawings/                     # Sample drawing images
-│   └── homeworks/                    # Sample homework images
-├── app.config.js                     # Expo configuration
-├── .env                              # Environment variables
-└── package.json                      # Dependencies
+│   ├── screens/          # 画面コンポーネント (HomeworkUpload, CharacterCreation etc.)
+│   ├── components/       # 再利用可能なコンポーネント
+│   ├── services/         # APIサービス (Gemini, ElevenLabs, MemU)
+│   ├── navigation/       # ナビゲーション設定
+│   └── theme/            # デザインテーマ
+├── animation_orchestrator/ # Pythonバックエンド (SAM 2, Rigging)
+├── public/               # 静的アセット
+└── app.config.js         # Expo設定
 ```
 
-## 🔧 Configuration
+## 🔧 設定 (Configuration)
 
-### Environment Variables
-
-Create a `.env` file with your API keys:
+`.env` ファイルを作成し、APIキーを設定してください：
 
 ```env
-# ElevenLabs (Text-to-Speech)
+# ElevenLabs
 ELEVENLABS_API_KEY=your_key_here
 ELEVENLABS_VOICE_ID=your_voice_id_here
-ELEVENLABS_MODEL_ID=eleven_multilingual_v2
 
-# Google Gemini (Vision & AI)
+# Google Gemini
 GEMINI_API_KEY=your_key_here
 
-# MemU (Agentic Memory)
+# MemU
 MEMU_API_KEY=your_key_here
 MEMU_USER_ID=your_user_id_here
 MEMU_AGENT_ID=amibuddy_homework_assistant
-MEMU_BASE_URL=https://api.memu.so
 
-# SAM (Segmentation)
-SAM_API_URL=http://localhost:8000
+# SAM (Backend URL)
+SAM_API_URL=https://your-cloud-run-url.run.app
 SAM_API_KEY=your_key_here
 ```
 
-### Get API Keys
-
-- **ElevenLabs**: https://elevenlabs.io/
-- **Google Gemini**: https://aistudio.google.com/app/apikey
-- **MemU**: https://memu.so/
-- **Hugging Face (SAM)**: https://huggingface.co/settings/tokens
-
-## � iOS Simulator Notes
-
-The iOS Simulator cannot access your Mac's camera. Use these alternatives:
-
-- **Local Gallery** - View images from `public/drawings/` and `public/homeworks/`
-- **Photo Library** - Select from simulator's photo library
-- **File Browser** - Browse and select any image from your Mac
-
-## 🎨 Color Palette
-
-- **Sky Blue** (#87CEEB) - Friendly backgrounds
-- **Bright Blue** (#4A90E2) - Primary elements
-- **Sunny Yellow** (#FFD700) - Highlights and badges
-- **Happy Green** (#32CD32) - Action buttons
-- **Coral Pink** (#FF6B9D) - Secondary actions
-- **Soft Purple** (#9B59B6) - Tertiary actions
-- **Mint Green** (#98D8C8) - Accents
-
-## 🧠 MemU Integration
-
-AmiBuddy uses MemU to store and retrieve learning memories:
-
-### What Gets Stored
-- Character creation events
-- Homework analysis sessions
-- Voice conversation Q&A
-- Learning topics and difficulty levels
-- Timestamps and context
-
-### Memory Functions
-- `memorizeCharacterCreation()` - Store character data
-- `memorizeHomeworkSession()` - Store homework analysis
-- `memorizeConversation()` - Store Q&A exchanges
-- `retrieveMemories(query)` - Retrieve relevant memories
-- `getLearningSummary()` - Generate learning progress summary
-
-### Future Enhancements
-- Progress screen showing learning history
-- Context-aware AI responses using past memories
-- Personalized homework recommendations
-- Learning pattern analysis
-
-## 📦 Dependencies
-
-```json
-{
-  "@google/generative-ai": "^0.24.1",
-  "@react-navigation/native": "^6.1.11",
-  "expo": "^51.0.0",
-  "expo-av": "~14.0.3",
-  "expo-camera": "~15.0.16",
-  "expo-image-picker": "~15.1.0",
-  "expo-document-picker": "~12.0.0",
-  "lucide-react-native": "^0.358.0",
-  "react-native": "0.75.4"
-}
-```
-
-## 🎯 Key Features Summary
-
-✅ Character creation from drawings  
-✅ AI-powered homework analysis  
-✅ Voice conversation with speech-to-text  
-✅ Japanese text-to-speech responses  
-✅ Animated character with speaking effects  
-✅ Memory storage with MemU framework  
-✅ Child-friendly interface design  
-✅ Conversation history tracking  
-✅ Topic and difficulty identification  
-
-## 📝 License
+## 📝 ライセンス
 
 Private project
 
