@@ -44,11 +44,30 @@ export default {
         {
           photosPermission: "Allow AmiBuddy to access your photos from computer"
         }
-      ]
+      ],
+      "expo-localization"
     ],
     web: {
       bundler: "metro",
-      favicon: "./logo.png"
+      favicon: "./logo.png",
+      name: "AmiBuddy - AI Homework Companion",
+      shortName: "AmiBuddy",
+      description: "Bring your drawings to life and learn with AI! AmiBuddy turns your homework into interactive animated characters.",
+      themeColor: "#87CEEB",
+      startUrl: "/",
+      display: "standalone",
+      backgroundColor: "#ffffff",
+      meta: {
+        viewport: "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1.00001, viewport-fit=cover",
+        "og:title": "AmiBuddy - AI Homework Companion",
+        "og:description": "Bring your drawings to life and learn with AI! AmiBuddy turns your homework into interactive animated characters.",
+        "og:type": "website",
+        "og:image": "/logo.png",
+        "twitter:card": "summary",
+        "twitter:title": "AmiBuddy - AI Homework Companion",
+        "twitter:description": "Bring your drawings to life and learn with AI! AmiBuddy turns your homework into interactive animated characters.",
+        "twitter:image": "/logo.png"
+      }
     },
     extra: {
       ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
@@ -60,7 +79,8 @@ export default {
       MEMU_BASE_URL: process.env.MEMU_BASE_URL,
       SAM_API_URL: process.env.SAM_API_URL,
       SAM_API_KEY: process.env.SAM_API_KEY,
-      GEMINI_API_KEY: process.env.GEMINI_API_KEY
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+      ANIMATION_API_URL: process.env.ANIMATION_API_URL
     }
   }
 };

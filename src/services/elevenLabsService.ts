@@ -11,7 +11,7 @@ export async function configureAudio() {
     // Web doesn't need audio configuration
     return;
   }
-  
+
   await Audio.setAudioModeAsync({
     allowsRecordingIOS: false,
     playsInSilentModeIOS: true,
@@ -21,14 +21,15 @@ export async function configureAudio() {
   });
 }
 
-export async function playJapaneseVoice(text: string, apiKey?: string, voiceId?: string) {
+export async function playJapaneseVoice(text: string, locale: string = 'jp', apiKey?: string, voiceId?: string) {
   // Get API keys from environment or use provided ones
-  const key = apiKey || Constants.expoConfig?.extra?.ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY;
-  const voice = voiceId || Constants.expoConfig?.extra?.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID;
-  
+  const key = apiKey || process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY || Constants.expoConfig?.extra?.ELEVENLABS_API_KEY;
+  // TODO: Select voice based on locale/gender if available
+  const voice = voiceId || process.env.EXPO_PUBLIC_ELEVENLABS_VOICE_ID || Constants.expoConfig?.extra?.ELEVENLABS_VOICE_ID;
+
   if (!key || !voice) {
     console.error('Missing ElevenLabs credentials');
-    throw new Error('音声サービスの設定が見つかりません');
+    throw new Error(locale === 'en' ? 'Voice service settings not found' : '音声サービスの設定が見つかりません');
   }
 
   try {
@@ -45,25 +46,25 @@ export async function playJapaneseVoice(text: string, apiKey?: string, voiceId?:
         voice_settings: { stability: 0.5, similarity_boost: 0.75 }
       })
     });
-    
+
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       console.error('TTS request failed:', res.status, errText);
       throw new Error(`音声の生成に失敗しました: ${res.status}`);
     }
-    
+
     // Web version - use HTML5 Audio
     if (isWeb) {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      
+
       return new Promise((resolve, reject) => {
         try {
           const audio = new (window.Audio || Audio)(url);
-          
+
           // Handle autoplay policy
           const playPromise = audio.play();
-          
+
           if (playPromise !== undefined) {
             playPromise
               .then(() => {
@@ -77,11 +78,11 @@ export async function playJapaneseVoice(text: string, apiKey?: string, voiceId?:
                 // Autoplay was prevented
                 console.warn('Autoplay prevented, user interaction required:', error);
                 URL.revokeObjectURL(url);
-                
+
                 // Return a special object to indicate autoplay was blocked
-                resolve({ 
-                  blocked: true, 
-                  audio, 
+                resolve({
+                  blocked: true,
+                  audio,
                   url,
                   play: () => {
                     return audio.play().then(() => {
@@ -99,7 +100,7 @@ export async function playJapaneseVoice(text: string, apiKey?: string, voiceId?:
               resolve(null);
             };
           }
-          
+
           audio.onerror = (error) => {
             URL.revokeObjectURL(url);
             reject(error);
@@ -110,17 +111,17 @@ export async function playJapaneseVoice(text: string, apiKey?: string, voiceId?:
         }
       });
     }
-    
+
     // Mobile version - use Expo Audio
     const arrayBuffer = await res.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     const fileUri = `${FileSystem.cacheDirectory}voice-${Date.now()}.mp3`;
     await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
-    
+
     const sound = new Audio.Sound();
     await sound.loadAsync({ uri: fileUri }, { shouldPlay: true }, true);
     await sound.playAsync();
-    
+
     return sound;
   } catch (error) {
     console.error('Voice playback error:', error);

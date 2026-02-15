@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ScrollView, Alert, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Image, ScrollView, Alert, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { COLORS } from '../theme/colors';
-import { Save, User } from 'lucide-react-native';
+import { Save, User, ChevronLeft } from 'lucide-react-native';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage, auth, db } from '../firebaseConfig';
+import { collection, addDoc } from 'firebase/firestore';
 import { playJapaneseVoice, configureAudio } from '../services/elevenLabsService';
-import { segmentDrawing } from '../services/visionService';
-import { memorizeCharacterCreation } from '../services/memuService';
+import { segmentCharacter, generateAnimation } from '../services/animationService';
+import { useLanguage } from '../contexts/LanguageContext';
+import { Video } from 'expo-av';
 import AnimatedCharacter from '../components/AnimatedCharacter';
+import LiveBuddy from '../components/LiveBuddy';
 
 export default function CharacterCreation({ route, navigation }) {
   const { imageUri } = route.params || {};
@@ -13,104 +18,245 @@ export default function CharacterCreation({ route, navigation }) {
   const [saving, setSaving] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [segmentedUri, setSegmentedUri] = useState(null);
+  const [rigData, setRigData] = useState(null);
+  const [partUrls, setPartUrls] = useState(null);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [videoUri, setVideoUri] = useState(null);
+  const { t } = useLanguage();
+  const [error, setError] = useState(null);
 
   React.useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const result = await segmentDrawing(imageUri);
-        if (mounted) setSegmentedUri(result.segmentedUri);
+        console.log('Starting segmentation for:', imageUri);
+        // Set segmentedUri to null to show loading state
+        setSegmentedUri(null);
+        setPartUrls(null);
+
+        // Play loading voice message
+        const loadingText = t('loading') || 'Generating character... Please wait.';
+        playJapaneseVoice(loadingText).catch(err => console.log('Voice preview warning:', err));
+
+        const result = await segmentCharacter(imageUri);
+
+        if (mounted && result) {
+          console.log('Segmentation complete:', result);
+          setRigData(result.rig_data);
+          setPartUrls(result.part_urls); // Store parts
+
+          // Set segmentedUri to indicate completion
+          setSegmentedUri(imageUri);
+        } else if (mounted) {
+          // Fallback if null
+          setSegmentedUri(imageUri);
+        }
       } catch (error) {
         console.error('Segmentation error:', error);
+        if (mounted) setSegmentedUri(imageUri);
       }
     })();
     return () => { mounted = false; };
   }, [imageUri]);
 
+  const showError = (message) => {
+    if (Platform.OS === 'web') {
+      setError(message);
+      setTimeout(() => setError(null), 5000);
+    } else {
+      Alert.alert(t('error'), message);
+    }
+  };
+
   const handleSave = async () => {
+    setError(null);
     if (!characterName.trim()) {
-      Alert.alert('なまえを いれてね', 'キャラクターの なまえを いれてください');
+      showError(t('errorNameRequired') || 'Please enter a character name');
       return;
     }
 
     setSaving(true);
     try {
       await configureAudio();
-      
-      await memorizeCharacterCreation({
-        characterName: characterName.trim(),
-        drawingImageUri: imageUri,
-        createdAt: new Date()
-      });
-      
-      setSpeaking(true);
-      const introText = `こんにちは、わたしは ${characterName} です。しゅくだいの がぞうを いれてください。`;
-      
-      try {
-        const result = await playJapaneseVoice(introText);
-        
-        // Check if autoplay was blocked (web only)
-        if (result && result.blocked) {
-          console.log('Autoplay blocked, skipping voice');
-          // Continue to next screen without voice
+
+      const uriToSave = segmentedUri || imageUri;
+      let storageUrl = uriToSave;
+
+      console.log('handleSave: uriToSave length:', uriToSave ? uriToSave.length : 0);
+      console.log('handleSave: uriToSave startsWith:', uriToSave ? uriToSave.substring(0, 30) : 'null');
+
+      // Upload to Firebase Storage if it's a local/blob/data URI
+      if (uriToSave && (uriToSave.startsWith('blob:') || uriToSave.startsWith('file:') || uriToSave.startsWith('data:'))) {
+        console.log('handleSave: processing upload...');
+        try {
+          let blob;
+          if (uriToSave.startsWith('data:')) {
+            // Convert base64 data URI to Blob
+            const byteString = atob(uriToSave.split(',')[1]);
+            const mimeString = uriToSave.split(',')[0].split(':')[1].split(';')[0];
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) {
+              ia[i] = byteString.charCodeAt(i);
+            }
+            blob = new Blob([ab], { type: mimeString });
+          } else {
+            const response = await fetch(uriToSave);
+            blob = await response.blob();
+          }
+          const filename = `characters/${auth.currentUser.uid}/${Date.now()}.jpg`;
+          const storageRef = ref(storage, filename);
+
+          await uploadBytes(storageRef, blob);
+          storageUrl = await getDownloadURL(storageRef);
+          console.log('Uploaded character image:', storageUrl);
+        } catch (uploadError) {
+          console.error('Image upload failed, falling back to original URI (might fail on web refresh):', uploadError);
+          // We continue, but saving blob URI is risky. 
+          // If upload fails, maybe we should stop? 
+          // For now, let's try to proceed or just throw.
+          throw new Error('Failed to upload image to storage');
         }
-      } catch (voiceError) {
-        console.warn('Voice playback failed, continuing anyway:', voiceError);
-        // Continue even if voice fails
       }
-      
-      setSpeaking(false);
-      
+
+      const charData = {
+        name: characterName,
+        createdAt: new Date(),
+        imageUri: storageUrl, // Save the storage URL
+        rigData: rigData || null,
+        partUrls: partUrls || null
+      };
+
+      if (auth.currentUser) {
+        await addDoc(collection(db, 'users', auth.currentUser.uid, 'characters'), charData);
+      }
+
+      const params = {
+        characterName,
+        characterImage: storageUrl,
+        rigData,
+        partUrls
+      };
+
       // Navigate to homework upload
-      navigation.navigate('HomeworkUpload', {
-        characterName: characterName.trim(),
-        characterImage: segmentedUri || imageUri
-      });
+      navigation.navigate('HomeworkUpload', params);
     } catch (error) {
       console.error('Save error:', error);
-      Alert.alert('エラー', 'ほぞん できませんでした');
+      showError(t('errorSave') || 'Failed to save character');
       setSpeaking(false);
     } finally {
       setSaving(false);
     }
+  }
+
+  const handleAnimate = async () => {
+    if (isAnimating || videoUri) return;
+
+    setIsAnimating(true);
+    try {
+      const uri = segmentedUri || imageUri;
+      console.log('Starting animation for:', uri);
+      // DEBUG: Alert start
+      // Alert.alert('Debug', 'Starting animation request...');
+
+      const video = await generateAnimation(uri, characterName || "A friendly character");
+
+      if (video) {
+        setVideoUri(video);
+        console.log('Animation video set:', video);
+        // DEBUG: Alert success
+        Alert.alert('Success', 'Video generated! URI: ' + video);
+      } else {
+        Alert.alert('エラー', 'どうがの さくせいに しっぱいしました (Result null)');
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert('エラー', `どうがの さくせいに しっぱいしました: ${e.message}`);
+    } finally {
+      setIsAnimating(false);
+    }
   };
+
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerIcon}>
-            <User color={COLORS.primary} size={28} strokeWidth={2.5} />
+          <View style={styles.headerTop}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+              <ChevronLeft color={COLORS.gray[700]} size={28} />
+            </TouchableOpacity>
+            <View style={styles.headerIcon}>
+              <User color={COLORS.primary} size={28} strokeWidth={2.5} />
+            </View>
           </View>
-          <Text style={styles.headerTitle}>キャラクター作成</Text>
-          <Text style={styles.headerSubtitle}>あなたの学習パートナーに名前をつけよう</Text>
+          <Text style={styles.headerTitle}>{t('createCharacter')}</Text>
+          <Text style={styles.headerSubtitle}>{t('nameCharacter')}</Text>
         </View>
+
+        {error && (
+          <View style={{ backgroundColor: '#ffebee', padding: 10, marginBottom: 20, borderRadius: 8 }}>
+            <Text style={{ color: '#c62828', textAlign: 'center' }}>{error}</Text>
+          </View>
+        )}
 
         {/* Character Image */}
         <View style={styles.imageSection}>
           {segmentedUri ? (
             <View style={styles.characterContainer}>
-              <AnimatedCharacter 
-                imageUri={segmentedUri} 
-                size={200} 
-                isSpeaking={speaking}
-              />
+              {videoUri && Platform.OS !== 'web' ? (
+                <Video
+                  source={{ uri: videoUri }}
+                  style={{ width: 200, height: 200 }}
+                  useNativeControls
+                  resizeMode="contain"
+                  isLooping
+                  shouldPlay
+                />
+              ) : partUrls ? (
+                <LiveBuddy
+                  partUrls={partUrls}
+                  rigData={rigData}
+                  speaking={speaking}
+                />
+              ) : (
+                <AnimatedCharacter
+                  imageUri={segmentedUri}
+                  size={200}
+                  isSpeaking={speaking}
+                />
+              )}
+
+              {/* Hide Animation button on Web for now */}
+              {!videoUri && Platform.OS !== 'web' && (
+                <TouchableOpacity
+                  style={styles.animateButton}
+                  onPress={handleAnimate}
+                  disabled={isAnimating}
+                >
+                  {isAnimating ? (
+                    <ActivityIndicator color="#FFF" size="small" />
+                  ) : (
+                    <Text style={styles.animateButtonText}>{t('animate')}</Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
           ) : (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={COLORS.primary} />
-              <Text style={styles.loadingText}>よみこみちゅう...</Text>
+              <Text style={styles.loadingText}>{t('loading')}</Text>
             </View>
           )}
         </View>
 
         {/* Name Input Card */}
         <View style={styles.inputCard}>
-          <Text style={styles.inputLabel}>キャラクター名</Text>
+          <Text style={styles.inputLabel}>{t('characterName')}</Text>
           <TextInput
             style={styles.input}
-            placeholder="なまえを入力してください"
+            placeholder={t('namePlaceholder')}
             placeholderTextColor={COLORS.gray[400]}
             value={characterName}
             onChangeText={setCharacterName}
@@ -128,21 +274,26 @@ export default function CharacterCreation({ route, navigation }) {
           disabled={saving || !characterName.trim()}
           style={[
             styles.saveButton,
-            (saving || !characterName.trim()) && styles.saveButtonDisabled
+            (saving || !characterName.trim()) && styles.saveButtonDisabled,
+            saving && { backgroundColor: COLORS.white, borderWidth: 2, borderColor: COLORS.primary } // Style change for loading
           ]}
           activeOpacity={0.8}
         >
-          <Save color={COLORS.white} size={22} strokeWidth={2.5} />
-          <Text style={styles.saveButtonText}>
-            {saving ? 'ほぞんちゅう...' : '保存して次へ'}
-          </Text>
+          {saving ? (
+            <ActivityIndicator size="large" color={COLORS.primary} />
+          ) : (
+            <>
+              <Save color={COLORS.white} size={22} strokeWidth={2.5} />
+              <Text style={styles.saveButtonText}>{t('saveCharacter')}</Text>
+            </>
+          )}
         </TouchableOpacity>
 
         {/* Info Box */}
         <View style={styles.infoBox}>
           <View style={styles.infoDot} />
           <Text style={styles.infoText}>
-            名前を保存すると、キャラクターが自己紹介します
+            {t('saveCharacterInfo')}
           </Text>
         </View>
       </View>
@@ -169,7 +320,20 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.blue[50],
     alignItems: 'center',
     justifyContent: 'center',
+    justifyContent: 'center',
     marginBottom: 16,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 0,
+    gap: 16
+  },
+  backButton: {
+    padding: 8,
+    backgroundColor: COLORS.gray[100],
+    borderRadius: 12,
+    marginBottom: 16 // align with icon
   },
   headerTitle: {
     fontSize: 28,

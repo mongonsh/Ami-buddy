@@ -1,18 +1,26 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../theme/colors';
-import { BookOpen, Sparkles } from 'lucide-react-native';
+import { BookOpen, Sparkles, Settings } from 'lucide-react-native';
+import { useLanguage } from '../contexts/LanguageContext';
 
 export default function Dashboard({ navigation, route }) {
   const buddyImageUri = route?.params?.buddyImageUri;
-  
+  const { t } = useLanguage();
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
-          <BookOpen color={COLORS.primary} size={32} strokeWidth={2.5} />
-          <Text style={styles.headerTitle}>AmiBuddy</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <BookOpen color={COLORS.primary} size={32} strokeWidth={2.5} />
+            <Text style={styles.headerTitle}>{t('appTitle')}</Text>
+          </View>
+          <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={styles.settingsButton}>
+            <Settings color={COLORS.gray[600]} size={28} />
+          </TouchableOpacity>
         </View>
         <View style={styles.headerUnderline} />
       </View>
@@ -33,44 +41,41 @@ export default function Dashboard({ navigation, route }) {
 
         {/* Title */}
         <View style={styles.titleContainer}>
-          <Text style={styles.title}>AI宿題アシスタント</Text>
-          <Text style={styles.subtitle}>あなたの学習をサポート</Text>
+          <Text style={styles.title}>{t('appSubtitle')}</Text>
+          <Text style={styles.subtitle}>{t('appTagline')}</Text>
         </View>
 
-        {/* CTA Button */}
-        <TouchableOpacity
-          onPress={() => navigation.navigate('CameraScan')}
-          style={styles.ctaButton}
-          activeOpacity={0.8}
-        >
-          <View style={styles.ctaButtonContent}>
-            <Sparkles color={COLORS.white} size={24} strokeWidth={2.5} />
-            <Text style={styles.ctaButtonText}>はじめる</Text>
-          </View>
-        </TouchableOpacity>
+        {/* CTA Buttons */}
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('CharacterSelection')}
+            style={styles.ctaButton}
+            activeOpacity={0.8}
+          >
+            <View style={styles.ctaButtonContent}>
+              <Sparkles color={COLORS.white} size={24} strokeWidth={2.5} />
+              <Text style={styles.ctaButtonText}>{t('start')}</Text>
+            </View>
+          </TouchableOpacity>
 
-        {/* Features */}
-        <View style={styles.features}>
-          <View style={styles.featureItem}>
-            <View style={[styles.featureDot, { backgroundColor: COLORS.primary }]} />
-            <Text style={styles.featureText}>キャラクター作成</Text>
-          </View>
-          <View style={styles.featureItem}>
-            <View style={[styles.featureDot, { backgroundColor: COLORS.secondary }]} />
-            <Text style={styles.featureText}>宿題分析</Text>
-          </View>
-          <View style={styles.featureItem}>
-            <View style={[styles.featureDot, { backgroundColor: COLORS.accent }]} />
-            <Text style={styles.featureText}>音声会話</Text>
-          </View>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('HomeworkHistory')}
+            style={[styles.ctaButton, styles.secondaryButton]}
+            activeOpacity={0.8}
+          >
+            <View style={styles.ctaButtonContent}>
+              <BookOpen color={COLORS.primary} size={24} strokeWidth={2.5} />
+              <Text style={[styles.ctaButtonText, styles.secondaryButtonText]}>{t('history')}</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
 
       {/* Footer */}
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Powered by AI</Text>
+        <Text style={styles.footerText}>{t('poweredBy')}</Text>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -80,13 +85,14 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   header: {
-    paddingTop: 60,
     paddingHorizontal: 24,
     paddingBottom: 20,
+    paddingTop: 10, // Add a little bit of top padding for aesthetics inside safe area
   },
   headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between', // Changed from default
     gap: 12,
   },
   headerTitle: {
@@ -101,6 +107,11 @@ const styles = StyleSheet.create({
     width: 60,
     marginTop: 8,
     borderRadius: 2,
+  },
+  settingsButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: COLORS.gray[100],
   },
   content: {
     flex: 1,
@@ -171,7 +182,21 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 6,
+    width: '100%',
+  },
+  buttonContainer: {
+    width: '100%',
+    gap: 16,
     marginBottom: 40,
+  },
+  secondaryButton: {
+    backgroundColor: COLORS.white,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    shadowColor: COLORS.gray[200],
+  },
+  secondaryButtonText: {
+    color: COLORS.primary,
   },
   ctaButtonContent: {
     flexDirection: 'row',

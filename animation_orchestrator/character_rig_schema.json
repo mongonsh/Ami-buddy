@@ -1,0 +1,64 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "CharacterRig",
+    "type": "object",
+    "properties": {
+        "character_name": {
+            "title": "Character Name",
+            "default": "Unknown",
+            "type": "string",
+            "description": "Name of the character"
+        },
+        "description": {
+            "title": "Description",
+            "default": "",
+            "type": "string",
+            "description": "Visual description of the character"
+        },
+        "keypoints": {
+            "title": "Keypoints",
+            "type": "array",
+            "items": {
+                "$ref": "#/definitions/Keypoint"
+            },
+            "description": "List of detected keypoints"
+        }
+    },
+    "required": [
+        "keypoints"
+    ],
+    "definitions": {
+        "Keypoint": {
+            "title": "Keypoint",
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "description": "Name of the keypoint (e.g., nose, left_eye, right_shoulder)"
+                },
+                "x": {
+                    "title": "X",
+                    "type": "number",
+                    "description": "Normalized X coordinate (0.0-1.0)"
+                },
+                "y": {
+                    "title": "Y",
+                    "type": "number",
+                    "description": "Normalized Y coordinate (0.0-1.0)"
+                },
+                "confidence": {
+                    "title": "Confidence",
+                    "type": "number",
+                    "description": "Confidence score (0.0-1.0)"
+                }
+            },
+            "required": [
+                "name",
+                "x",
+                "y",
+                "confidence"
+            ]
+        }
+    }
+}

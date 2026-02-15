@@ -1,14 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Image, ScrollView, Alert, ActivityIndicator, Dimensions, StyleSheet, Platform } from 'react-native';
 import { COLORS } from '../theme/colors';
-import { Upload, FolderOpen, Volume2, Mic, MicOff, FileImage, MessageCircle } from 'lucide-react-native';
+import { Upload, FolderOpen, Volume2, Mic, MicOff, FileImage, MessageCircle, ChevronLeft } from 'lucide-react-native';
 import { playJapaneseVoice, configureAudio } from '../services/elevenLabsService';
 import { analyzeHomeworkWithGemini, reviewHomeworkWithGemini } from '../services/geminiService';
 import { startRecording, stopRecording, getConversationResponse, transcribeAudioWithGemini } from '../services/voiceConversationService';
-import { memorizeHomeworkSession, memorizeConversation } from '../services/memuService';
+// import { memorizeHomeworkSession, memorizeConversation } from '../services/memuService'; // Removed MemU
 import AnimatedCharacter from '../components/AnimatedCharacter';
+import LiveBuddy from '../components/LiveBuddy';
+import { liveAnimationService } from '../services/liveAnimationService';
+import { Video } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { collection, addDoc, doc, updateDoc, increment } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { auth, db, storage } from '../firebaseConfig';
+import { useAuth } from '../contexts/AuthContext'; // Import AuthContext
 
 const { width } = Dimensions.get('window');
 const isWeb = Platform.OS === 'web';
@@ -18,8 +25,62 @@ const HOMEWORK_IMAGES = [
   { id: 1, source: require('../../public/homeworks/image.png'), name: 'Homework 1' },
 ];
 
+import { useLanguage } from '../contexts/LanguageContext';
+
 export default function HomeworkUpload({ route, navigation }) {
-  const { characterName, characterImage } = route.params || {};
+  const { characterName, characterImage, characterVideo, rigData, partUrls } = route.params || {};
+  const { userData } = useAuth(); // Get user data
+  const userName = userData?.displayName || ''; // Get user name
+  const { t, locale } = useLanguage();
+
+  useEffect(() => {
+    if (characterName) {
+      liveAnimationService.connect(characterName);
+    }
+    return () => {
+      liveAnimationService.disconnect();
+    }
+  }, [characterName]);
+
+  // Initial greeting
+  useEffect(() => {
+    let mounted = true;
+    const playIntro = async () => {
+      // Small delay to allow transition to finish
+      await new Promise(resolve => setTimeout(resolve, 800));
+      if (!mounted) return;
+
+      let introText = t('homeworkIntro') || 'Hello! Please upload your homework.';
+
+      // Personalize
+      if (userName) {
+        if (locale === 'jp') {
+          // "Name-san, " + text
+          // Ensure text doesn't start with a name if translation already has it (unlikely)
+          introText = `${userName}さん、${introText}`;
+        } else {
+          // "Hi Name, " + text
+          introText = `Hi ${userName}! ${introText}`;
+        }
+      }
+
+      setSpeaking(true);
+      try {
+        await configureAudio();
+        await playJapaneseVoice(introText, locale);
+      } catch (err) {
+        console.log('Intro voice error:', err);
+      } finally {
+        if (mounted) setSpeaking(false);
+      }
+    };
+
+    playIntro();
+    return () => { mounted = false; };
+  }, []);
+
+
+
   const [homeworkUri, setHomeworkUri] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -28,17 +89,19 @@ export default function HomeworkUpload({ route, navigation }) {
   const [isRecording, setIsRecording] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [processing, setProcessing] = useState(false);
-  
+  const [error, setError] = useState(null);
+
   // Timer states
   const [timerStarted, setTimerStarted] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [lessonFinished, setLessonFinished] = useState(false);
-  
+
   // Review states
   const [showReview, setShowReview] = useState(false);
   const [reviewImage, setReviewImage] = useState(null);
   const [reviewResult, setReviewResult] = useState(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   // Timer effect
   React.useEffect(() => {
@@ -51,6 +114,56 @@ export default function HomeworkUpload({ route, navigation }) {
     return () => clearInterval(interval);
   }, [timerStarted, lessonFinished]);
 
+  const saveAndNavigate = async () => {
+    try {
+      if (auth.currentUser) {
+        setShowSuccessModal(false);
+        const magicCardUrl = `https://ui-avatars.com/api/?name=${characterName}+Card&background=F59E0B&color=fff&size=512&font-size=0.33`;
+        const userRef = doc(db, 'users', auth.currentUser.uid);
+
+        let storageUrl = homeworkUri;
+        // Upload homework image to Storage
+        if (homeworkUri && (homeworkUri.startsWith('blob:') || homeworkUri.startsWith('file:') || homeworkUri.startsWith('data:'))) {
+          try {
+            const response = await fetch(homeworkUri);
+            const blob = await response.blob();
+            const filename = `homeworks/${auth.currentUser.uid}/${Date.now()}.jpg`;
+            const storageRef = ref(storage, filename);
+            await uploadBytes(storageRef, blob);
+            storageUrl = await getDownloadURL(storageRef);
+            console.log('Uploaded homework image:', storageUrl);
+          } catch (uploadError) {
+            console.error('Homework upload failed:', uploadError);
+            // Proceed with original URI or fail? Proceeding might fail addDoc if base64.
+            // But let's try to proceed.
+          }
+        }
+
+        await addDoc(collection(db, 'users', auth.currentUser.uid, 'homeworks'), {
+          characterName,
+          homeworkImage: storageUrl,
+          description: result?.description || '',
+          topics: result?.topics || [],
+          difficulty: result?.difficulty || '',
+          durationSeconds: elapsedTime,
+          completedAt: new Date(),
+          score: reviewResult?.score || 100,
+          feedback: reviewResult?.feedback || 'Great job!',
+          magicCardUrl: magicCardUrl
+        });
+        const { increment } = require('firebase/firestore');
+        await updateDoc(userRef, {
+          homeworkCount: increment(1)
+        });
+        console.log('Homework session saved');
+      }
+    } catch (e) {
+      console.error("Error saving homework:", e);
+      Alert.alert('Error', 'Failed to save homework history');
+    }
+    navigation.navigate('Dashboard');
+  };
+
   const formatTime = (seconds) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -61,86 +174,122 @@ export default function HomeworkUpload({ route, navigation }) {
   const analyzeAndSpeak = async (imageUri) => {
     setAnalyzing(true);
     try {
-      const analysis = await analyzeHomeworkWithGemini(imageUri);
+      // Pass locale to analysis service to get response in correct language
+      const analysis = await analyzeHomeworkWithGemini(imageUri, locale);
       setResult(analysis);
-      
+
       // Start timer when homework is analyzed
       if (!timerStarted) {
         setTimerStarted(true);
       }
-      
-      await memorizeHomeworkSession({
-        characterName,
-        homeworkDescription: analysis.description,
-        topics: analysis.topics,
-        difficulty: analysis.difficulty,
-        imageUri
-      });
-      
+
       setSpeaking(true);
       await configureAudio();
-      
+
       try {
-        const playResult = await playJapaneseVoice(analysis.description);
+        // Personalize voice
+        let message = analysis.description;
+        if (locale === 'jp') {
+          const prefix = userName ? `${userName}さん、` : '';
+          message = prefix + message;
+        } else {
+          const prefix = userName ? `Hi ${userName}, ` : '';
+          message = prefix + message;
+        }
+
+        // Pass locale to voice service
+        const playResult = await playJapaneseVoice(message, locale);
         if (playResult && playResult.blocked) {
           console.log('Autoplay blocked, user can click replay button');
         }
       } catch (voiceError) {
         console.warn('Voice playback failed:', voiceError);
       }
-      
+
       setSpeaking(false);
     } catch (error) {
       console.error('Analysis error:', error);
-      Alert.alert('エラー', '宿題の分析ができませんでした');
+      Alert.alert(t('error'), t('error'));
       setSpeaking(false);
     } finally {
       setAnalyzing(false);
     }
   };
 
+  const [showLimitModal, setShowLimitModal] = useState(false);
+
+  const checkLimit = () => {
+    if (userData?.homeworkCount >= 5 && !userData?.isPremium) {
+      setShowLimitModal(true);
+      return false;
+    }
+    return true;
+  };
+
   const handleLocalImage = async (imageSource) => {
+    if (!checkLimit()) return;
+
     const resolvedSource = Image.resolveAssetSource(imageSource);
     setHomeworkUri(resolvedSource.uri);
     await analyzeAndSpeak(resolvedSource.uri);
   };
 
+  // Helper to show errors
+  const showError = (message) => {
+    if (Platform.OS === 'web') {
+      setError(message);
+    } else {
+      Alert.alert(t('error') || 'Error', message);
+    }
+  };
+
   const handlePickImage = async () => {
+    setError(null);
+    if (!checkLimit()) return;
+
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('アクセスが必要です', '写真を選ぶには許可が必要です');
+        showError(t('permissionRequired') || 'Permission required to access photos');
         return;
       }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        quality: 0.95,
+        quality: 0.8, // Reduced quality slightly for faster web upload
+        base64: true, // Request base64 directly to avoid re-reading blob if possible
       });
+
       if (!result.canceled && result.assets?.length) {
-        const uri = result.assets[0].uri;
+        const asset = result.assets[0];
+        const uri = asset.uri;
         setHomeworkUri(uri);
+        // If getting base64 from picker, we could pass it to service, 
+        // but verify service handles it. Service infers from URI or reads file.
         await analyzeAndSpeak(uri);
       }
     } catch (error) {
       console.error('Image picker error:', error);
-      Alert.alert('エラー', '写真を選べませんでした');
+      showError(t('pickImageError') || 'Failed to pick image');
     }
   };
 
   const handlePickFromFiles = async () => {
+    if (!checkLimit()) return;
+
     try {
-      const result = await DocumentPicker.getDocumentAsync({ 
-        type: ['image/*'], 
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
         copyToCacheDirectory: true,
         multiple: false
       });
-      
+
       if (result.canceled) return;
-      
+
       const asset = result.assets?.[0];
       const uri = asset?.uri;
-      
+
       if (uri) {
         setHomeworkUri(uri);
         await analyzeAndSpeak(uri);
@@ -157,7 +306,7 @@ export default function HomeworkUpload({ route, navigation }) {
     try {
       await configureAudio();
       const playResult = await playJapaneseVoice(result.description);
-      
+
       if (playResult && playResult.blocked && playResult.play) {
         await playResult.play();
       }
@@ -182,36 +331,39 @@ export default function HomeworkUpload({ route, navigation }) {
 
   const handleStopRecording = async () => {
     if (!recording) return;
-    
+
     setIsRecording(false);
     setProcessing(true);
-    
+
     try {
       const audioUri = await stopRecording(recording);
       setRecording(null);
-      
-      const question = await transcribeAudioWithGemini(audioUri);
+
+      const question = await transcribeAudioWithGemini(audioUri, locale);
       const newHistory = [...conversationHistory, { role: 'user', content: question }];
       setConversationHistory(newHistory);
-      
+
       const answer = await getConversationResponse(
         question,
         result?.description || '',
-        conversationHistory
+        conversationHistory,
+        locale
       );
-      
+
       setConversationHistory([...newHistory, { role: 'assistant', content: answer }]);
-      
+
+      /*
       await memorizeConversation({
         characterName,
         question,
         answer,
         homeworkContext: result?.description
       });
-      
+      */
+
       setSpeaking(true);
       await configureAudio();
-      
+
       try {
         const playResult = await playJapaneseVoice(answer);
         if (playResult && playResult.blocked && playResult.play) {
@@ -220,9 +372,9 @@ export default function HomeworkUpload({ route, navigation }) {
       } catch (voiceError) {
         console.warn('Voice playback failed:', voiceError);
       }
-      
+
       setSpeaking(false);
-      
+
     } catch (error) {
       console.error('Recording processing error:', error);
       Alert.alert('エラー', '音声の処理ができませんでした');
@@ -235,17 +387,16 @@ export default function HomeworkUpload({ route, navigation }) {
   const handleFinishLesson = async () => {
     setLessonFinished(true);
     setTimerStarted(false);
-    
-    const inspirationalMessages = [
-      'よくがんばりました！あなたはすごいです！',
-      'すばらしい！あなたのどりょくがみえます！',
-      'さいこうです！あなたはとてもかしこいです！',
-      'がんばりましたね！あなたはスターです！',
-      'すごい！あなたのがんばりにかんどうしました！'
+
+    const inspirationalMessages = t('inspirationalMessages');
+    // Fallback if t returns string or undefined (though strict mode might behave differently)
+    const messages = Array.isArray(inspirationalMessages) ? inspirationalMessages : [
+      'Great job!', 'You did it!'
     ];
-    
-    const message = inspirationalMessages[Math.floor(Math.random() * inspirationalMessages.length)];
-    
+
+    const randomMsg = messages[Math.floor(Math.random() * messages.length)];
+    const message = userName ? (locale === 'jp' ? `${userName}さん、${randomMsg}` : `${userName}, ${randomMsg}`) : randomMsg;
+
     setSpeaking(true);
     try {
       await configureAudio();
@@ -258,25 +409,24 @@ export default function HomeworkUpload({ route, navigation }) {
     } finally {
       setSpeaking(false);
     }
-    
-    Alert.alert(
-      '🎉 レッスン完了！',
-      `${message}\n\n学習時間: ${formatTime(elapsedTime)}`,
-      [{ text: 'OK' }]
-    );
+
+    setShowSuccessModal(true);
   };
 
   const handlePickReviewImage = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('アクセスが必要です', '写真を選ぶには許可が必要です');
-        return;
+      if (Platform.OS !== 'web') {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          showError(t('permissionRequired') || 'Permission required');
+          return;
+        }
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.95,
+        allowsEditing: Platform.OS !== 'web',
+        quality: 0.8,
+        base64: true,
       });
       if (!result.canceled && result.assets?.length) {
         const uri = result.assets[0].uri;
@@ -294,10 +444,10 @@ export default function HomeworkUpload({ route, navigation }) {
     try {
       const review = await reviewHomeworkWithGemini(imageUri, result?.description || '');
       setReviewResult(review);
-      
+
       setSpeaking(true);
       await configureAudio();
-      
+
       try {
         const playResult = await playJapaneseVoice(review.feedback);
         if (playResult && playResult.blocked && playResult.play) {
@@ -306,7 +456,7 @@ export default function HomeworkUpload({ route, navigation }) {
       } catch (voiceError) {
         console.warn('Voice playback failed:', voiceError);
       }
-      
+
       setSpeaking(false);
     } catch (error) {
       console.error('Review error:', error);
@@ -319,21 +469,69 @@ export default function HomeworkUpload({ route, navigation }) {
 
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        style={styles.backButton}
+        activeOpacity={0.7}
+      >
+        <ChevronLeft color={COLORS.gray[700]} size={28} />
+      </TouchableOpacity>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         <View style={[styles.mainContent, isMobile && styles.mainContentMobile]}>
           {/* Left Column - Character */}
           <View style={[styles.leftColumn, isMobile && styles.leftColumnMobile]}>
             <View style={[styles.characterCard, isMobile && styles.characterCardMobile]}>
-              {characterImage && (
-                <View style={styles.characterImageContainer}>
-                  <AnimatedCharacter 
-                    imageUri={characterImage} 
-                    size={isMobile ? 150 : 200} 
-                    isSpeaking={speaking}
+              {partUrls && Object.keys(partUrls).length > 0 ? (
+                <View style={{ width: 300, height: 300, justifyContent: 'center', alignItems: 'center' }}>
+                  <LiveBuddy
+                    partUrls={partUrls}
+                    rigData={rigData}
+                    speaking={speaking}
+                    emotion="neutral"
                   />
                 </View>
+              ) : characterVideo ? (
+                <View
+                  style={[
+                    styles.characterImageContainer,
+                    {
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '100%',
+                      aspectRatio: 1, // Keep square aspect ratio
+                      // borderRadius removed to show full rectangle if needed, or small radius for card look
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      backgroundColor: '#f0f0f0', // Slight gray background to see bounds
+                      borderWidth: 3,
+                      borderColor: speaking ? COLORS.sunnyYellow : COLORS.brightBlue,
+                    }
+                  ]}
+                >
+                  <Video
+                    source={{ uri: characterVideo }}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="contain" // Contain to show full video content
+                    isLooping
+                    shouldPlay={speaking}
+
+                    isMuted={false}
+                    onError={(e) => console.error('Video playback error:', e)}
+                    onLoad={() => console.log('Video loaded successfully')}
+                  />
+                </View>
+              ) : (
+                characterImage && (
+                  <View style={styles.characterImageContainer}>
+                    <AnimatedCharacter
+                      imageUri={characterImage}
+                      size={isMobile ? 150 : 200}
+                      isSpeaking={speaking}
+                    />
+                  </View>
+                )
               )}
-              
+
               {/* Character Name - Always at bottom */}
               <View style={[styles.characterNameContainer, isMobile && styles.characterNameContainerMobile]}>
                 <Text style={[styles.characterName, isMobile && styles.characterNameMobile]}>{characterName}</Text>
@@ -342,23 +540,23 @@ export default function HomeworkUpload({ route, navigation }) {
                 </Text>
               </View>
             </View>
-            
+
             {/* Timer - Separate card on mobile */}
             {timerStarted && isMobile && (
               <View style={[styles.timerContainer, styles.timerContainerMobile]}>
-                <Text style={[styles.timerLabel, styles.timerLabelMobile]}>学習時間</Text>
+                <Text style={[styles.timerLabel, styles.timerLabelMobile]}>{t('lessonTime')}</Text>
                 <Text style={[styles.timerText, styles.timerTextMobile]}>{formatTime(elapsedTime)}</Text>
               </View>
             )}
-            
+
             {/* Timer - Inside card on desktop */}
             {timerStarted && !isMobile && (
               <View style={styles.timerContainer}>
-                <Text style={styles.timerLabel}>学習時間</Text>
+                <Text style={styles.timerLabel}>{t('lessonTime')}</Text>
                 <Text style={styles.timerText}>{formatTime(elapsedTime)}</Text>
               </View>
             )}
-            
+
             {/* Finish Button */}
             {result && timerStarted && !lessonFinished && (
               <TouchableOpacity
@@ -366,7 +564,7 @@ export default function HomeworkUpload({ route, navigation }) {
                 style={[styles.finishButton, isMobile && styles.finishButtonMobile]}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.finishButtonText, isMobile && styles.finishButtonTextMobile]}>レッスン完了</Text>
+                <Text style={[styles.finishButtonText, isMobile && styles.finishButtonTextMobile]}>{t('finishLesson')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -378,12 +576,18 @@ export default function HomeworkUpload({ route, navigation }) {
               <View style={styles.uploadSection}>
                 <View style={styles.uploadHeader}>
                   <FileImage color={COLORS.primary} size={28} strokeWidth={2.5} />
-                  <Text style={styles.uploadTitle}>宿題をアップロード</Text>
+                  <Text style={styles.uploadTitle}>{t('uploadHomework')}</Text>
                 </View>
+
+                {error && (
+                  <View style={{ backgroundColor: '#ffebee', padding: 10, marginVertical: 10, borderRadius: 8 }}>
+                    <Text style={{ color: '#c62828', textAlign: 'center' }}>{error}</Text>
+                  </View>
+                )}
 
                 {/* Local Gallery */}
                 <View style={styles.localGallery}>
-                  <Text style={styles.sectionLabel}>サンプル画像</Text>
+                  <Text style={styles.sectionLabel}>{t('sampleImage')}</Text>
                   <View style={styles.galleryGrid}>
                     {HOMEWORK_IMAGES.map((image) => (
                       <TouchableOpacity
@@ -409,7 +613,7 @@ export default function HomeworkUpload({ route, navigation }) {
                     activeOpacity={0.8}
                   >
                     <FolderOpen color={COLORS.white} size={22} strokeWidth={2.5} />
-                    <Text style={styles.uploadButtonText}>ギャラリー</Text>
+                    <Text style={styles.uploadButtonText}>{t('uploadGallery')}</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -418,7 +622,7 @@ export default function HomeworkUpload({ route, navigation }) {
                     activeOpacity={0.8}
                   >
                     <Upload color={COLORS.white} size={22} strokeWidth={2.5} />
-                    <Text style={styles.uploadButtonText}>ファイル</Text>
+                    <Text style={styles.uploadButtonText}>{t('uploadFile')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -434,7 +638,7 @@ export default function HomeworkUpload({ route, navigation }) {
                 {analyzing && (
                   <View style={styles.analyzingCard}>
                     <ActivityIndicator size="large" color={COLORS.primary} />
-                    <Text style={styles.analyzingText}>AI分析中...</Text>
+                    <Text style={styles.analyzingText}>{t('analyzing')}</Text>
                   </View>
                 )}
 
@@ -442,7 +646,7 @@ export default function HomeworkUpload({ route, navigation }) {
                 {result && !analyzing && (
                   <View style={styles.analysisCard}>
                     <View style={styles.analysisHeader}>
-                      <Text style={styles.analysisTitle}>分析結果</Text>
+                      <Text style={styles.analysisTitle}>{t('result')}</Text>
                       <TouchableOpacity
                         onPress={handleReplay}
                         disabled={speaking}
@@ -457,7 +661,7 @@ export default function HomeworkUpload({ route, navigation }) {
 
                     {result.topics && result.topics.length > 0 && (
                       <View style={styles.topicsSection}>
-                        <Text style={styles.topicsLabel}>トピック</Text>
+                        <Text style={styles.topicsLabel}>{t('topics')}</Text>
                         <View style={styles.topicsList}>
                           {result.topics.map((topic, index) => (
                             <View key={index} style={styles.topicBadge}>
@@ -470,7 +674,7 @@ export default function HomeworkUpload({ route, navigation }) {
 
                     {result.difficulty && (
                       <View style={styles.difficultySection}>
-                        <Text style={styles.difficultyLabel}>難易度</Text>
+                        <Text style={styles.difficultyLabel}>{t('difficulty')}</Text>
                         <View style={styles.difficultyBadge}>
                           <Text style={styles.difficultyText}>{result.difficulty}</Text>
                         </View>
@@ -484,7 +688,7 @@ export default function HomeworkUpload({ route, navigation }) {
                   <View style={styles.conversationCard}>
                     <View style={styles.conversationHeader}>
                       <MessageCircle color={COLORS.accent} size={24} strokeWidth={2.5} />
-                      <Text style={styles.conversationTitle}>質問する</Text>
+                      <Text style={styles.conversationTitle}>{t('askQuestion')}</Text>
                     </View>
 
                     {/* Conversation History */}
@@ -499,7 +703,7 @@ export default function HomeworkUpload({ route, navigation }) {
                             ]}
                           >
                             <Text style={styles.messageRole}>
-                              {msg.role === 'user' ? 'あなた' : characterName}
+                              {msg.role === 'user' ? (locale === 'jp' ? 'あなた' : 'You') : characterName}
                             </Text>
                             <Text style={styles.messageContent}>{msg.content}</Text>
                           </View>
@@ -524,14 +728,14 @@ export default function HomeworkUpload({ route, navigation }) {
                         <Mic color={COLORS.white} size={24} strokeWidth={2.5} />
                       )}
                       <Text style={styles.recordButtonText}>
-                        {processing ? '処理中...' : isRecording ? '停止' : '録音開始'}
+                        {processing ? t('processing') : isRecording ? t('recordStop') : t('recordStart')}
                       </Text>
                     </TouchableOpacity>
 
                     {isRecording && (
                       <View style={styles.recordingIndicator}>
                         <View style={styles.recordingDot} />
-                        <Text style={styles.recordingText}>録音中...</Text>
+                        <Text style={styles.recordingText}>{t('recording')}</Text>
                       </View>
                     )}
                   </View>
@@ -541,7 +745,7 @@ export default function HomeworkUpload({ route, navigation }) {
                 {result && !analyzing && lessonFinished && (
                   <View style={styles.reviewSection}>
                     <View style={styles.reviewHeader}>
-                      <Text style={styles.reviewTitle}>📝 宿題をレビュー</Text>
+                      <Text style={styles.reviewTitle}>{t('reviewHomework')}</Text>
                     </View>
 
                     {!reviewImage ? (
@@ -551,7 +755,7 @@ export default function HomeworkUpload({ route, navigation }) {
                         activeOpacity={0.8}
                       >
                         <Upload color={COLORS.white} size={24} strokeWidth={2.5} />
-                        <Text style={styles.reviewUploadText}>完成した宿題をアップロード</Text>
+                        <Text style={styles.reviewUploadText}>{t('uploadFinished')}</Text>
                       </TouchableOpacity>
                     ) : (
                       <View style={styles.reviewContent}>
@@ -564,7 +768,7 @@ export default function HomeworkUpload({ route, navigation }) {
                         {reviewLoading && (
                           <View style={styles.reviewLoadingCard}>
                             <ActivityIndicator size="large" color={COLORS.primary} />
-                            <Text style={styles.reviewLoadingText}>AIがレビュー中...</Text>
+                            <Text style={styles.reviewLoadingText}>{t('reviewing')}</Text>
                           </View>
                         )}
 
@@ -573,14 +777,14 @@ export default function HomeworkUpload({ route, navigation }) {
                           <View style={styles.reviewResultCard}>
                             <View style={styles.reviewScoreContainer}>
                               <Text style={styles.reviewSticker}>{reviewResult.sticker}</Text>
-                              <Text style={styles.reviewScore}>{reviewResult.score}点</Text>
+                              <Text style={styles.reviewScore}>{reviewResult.score}{t('score')}</Text>
                             </View>
 
                             <Text style={styles.reviewFeedback}>{reviewResult.feedback}</Text>
 
                             {reviewResult.strengths && reviewResult.strengths.length > 0 && (
                               <View style={styles.reviewStrengthsSection}>
-                                <Text style={styles.reviewSectionLabel}>よかったところ</Text>
+                                <Text style={styles.reviewSectionLabel}>{t('strengths')}</Text>
                                 {reviewResult.strengths.map((strength, index) => (
                                   <View key={index} style={styles.reviewItem}>
                                     <Text style={styles.reviewItemText}>✓ {strength}</Text>
@@ -591,7 +795,7 @@ export default function HomeworkUpload({ route, navigation }) {
 
                             {reviewResult.improvements && reviewResult.improvements.length > 0 && (
                               <View style={styles.reviewImprovementsSection}>
-                                <Text style={styles.reviewSectionLabel}>もっとよくなるヒント</Text>
+                                <Text style={styles.reviewSectionLabel}>{t('improvements')}</Text>
                                 {reviewResult.improvements.map((improvement, index) => (
                                   <View key={index} style={styles.reviewItem}>
                                     <Text style={styles.reviewItemText}>→ {improvement}</Text>
@@ -609,7 +813,7 @@ export default function HomeworkUpload({ route, navigation }) {
                               style={styles.reviewAgainButton}
                               activeOpacity={0.8}
                             >
-                              <Text style={styles.reviewAgainText}>別の画像をレビュー</Text>
+                              <Text style={styles.reviewAgainText}>{t('reviewAgain')}</Text>
                             </TouchableOpacity>
                           </View>
                         )}
@@ -628,13 +832,64 @@ export default function HomeworkUpload({ route, navigation }) {
                   style={styles.resetButton}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.resetButtonText}>別の宿題を選ぶ</Text>
+                  <Text style={styles.resetButtonText}>{t('reset')}</Text>
                 </TouchableOpacity>
               </View>
             )}
           </View>
         </View>
       </ScrollView>
+
+      {/* Limit Reached Modal */}
+      {showLimitModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>⚠️ {t('limitReached') || 'Limit Reached'}</Text>
+            <Text style={styles.modalMessage}>
+              {t('upgradeForUnlimited') || 'You have reached your daily limit of 5 homeworks. Upgrade to Premium for unlimited access!'}
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: COLORS.sunnyYellow, marginBottom: 10 }]}
+              onPress={() => {
+                setShowLimitModal(false);
+                navigation.navigate('Paywall');
+              }}
+            >
+              <Text style={[styles.modalButtonText, { color: COLORS.navy }]}>{t('upgradeNow') || 'Upgrade Now'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: 'transparent', borderWidth: 1, borderColor: COLORS.gray[300] }]}
+              onPress={() => setShowLimitModal(false)}
+            >
+              <Text style={[styles.modalButtonText, { color: COLORS.gray[600] }]}>{t('maybeLater') || 'Maybe Later'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Success Modal Overlay */}
+      {showSuccessModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>🎉 {t('lessonFinished') || 'Lesson Finished!'}</Text>
+            <Text style={styles.modalMessage}>
+              {userName ? `${userName}さん、` : ''}{t('greatJob') || 'Great job!'}
+              {'\n\n'}
+              {t('time')}: {formatTime(elapsedTime)}
+            </Text>
+            <Text style={styles.modalSubMessage}>✨ {t('magicCardEarned') || 'You earned a magic card!'}</Text>
+
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={saveAndNavigate}
+            >
+              <Text style={styles.modalButtonText}>{t('returnHome') || 'Return to Home'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -643,6 +898,20 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.white,
+  },
+  backButton: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    zIndex: 10,
+    padding: 8,
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   scrollView: {
     flex: 1,
@@ -663,11 +932,11 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     gap: 16,
   },
-  
+
   // Left Column - Character
   leftColumn: {
-    width: '30%',
-    minWidth: 280,
+    width: '48%', // Changed to approx 50%
+    minWidth: 320,
   },
   leftColumnMobile: {
     width: '100%',
@@ -729,7 +998,7 @@ const styles = StyleSheet.create({
   characterStatusMobile: {
     fontSize: 13,
   },
-  
+
   // Timer
   timerContainer: {
     backgroundColor: COLORS.blue[50],
@@ -772,7 +1041,7 @@ const styles = StyleSheet.create({
   timerTextMobile: {
     fontSize: 36,
   },
-  
+
   // Finish Button
   finishButton: {
     backgroundColor: COLORS.secondary,
@@ -802,7 +1071,7 @@ const styles = StyleSheet.create({
   finishButtonTextMobile: {
     fontSize: 16,
   },
-  
+
   // Right Column - Homework
   rightColumn: {
     flex: 1,
@@ -810,7 +1079,7 @@ const styles = StyleSheet.create({
   rightColumnMobile: {
     width: '100%',
   },
-  
+
   // Upload Section
   uploadSection: {
     gap: 24,
@@ -896,7 +1165,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  
+
   // Result Section
   resultSection: {
     gap: 20,
@@ -1129,7 +1398,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  
+
   // Review Section
   reviewSection: {
     backgroundColor: COLORS.white,
@@ -1270,5 +1539,62 @@ const styles = StyleSheet.create({
     color: COLORS.gray[700],
     fontSize: 14,
     fontWeight: '600',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    padding: 30,
+    borderRadius: 20,
+    alignItems: 'center',
+    width: '85%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: COLORS.primary,
+    marginBottom: 20,
+  },
+  modalMessage: {
+    fontSize: 18,
+    color: COLORS.gray[800],
+    textAlign: 'center',
+    marginBottom: 10,
+    lineHeight: 28,
+  },
+  modalSubMessage: {
+    fontSize: 16,
+    color: COLORS.accent,
+    fontWeight: 'bold',
+    marginTop: 10,
+    marginBottom: 30,
+  },
+  modalButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 14,
+    paddingHorizontal: 30,
+    borderRadius: 30,
+    width: '100%',
+    alignItems: 'center',
+  },
+  modalButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });

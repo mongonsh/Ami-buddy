@@ -30,7 +30,7 @@ export default function LocalGallery({ navigation }) {
   const handleImageSelect = async (image) => {
     try {
       let uri;
-      
+
       if (isWeb) {
         // Web: Use direct URI
         uri = image.uri;
@@ -58,28 +58,43 @@ export default function LocalGallery({ navigation }) {
     }
   };
 
+
+  const screenWidth = Dimensions.get('window').width;
+  const isDesktop = screenWidth >= 768; // Tablet/Desktop breakpoint
+  const numColumns = isDesktop ? 4 : 2;
+  const gap = 16;
+  const padding = 24;
+
+  // Calculate width accounting for gap and padding
+  // Total width available = screenWidth - (padding * 2) - ((numColumns - 1) * gap)
+  const availableWidth = Math.min(screenWidth, 1200) - (padding * 2) - ((numColumns - 1) * gap);
+  const imageWidth = availableWidth / numColumns;
+
+
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.white }}>
       {/* Header */}
       <View style={{ paddingTop: 60, paddingHorizontal: 24, paddingBottom: 20, backgroundColor: COLORS.primary, borderBottomWidth: 4, borderBottomColor: COLORS.blue[600] }}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
-        >
-          <ArrowLeft color={COLORS.white} size={24} strokeWidth={2.5} />
-          <Text style={{ color: COLORS.white, fontSize: 18, marginLeft: 8, fontWeight: '600' }}>戻る</Text>
-        </TouchableOpacity>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <ImageIcon color={COLORS.white} size={28} strokeWidth={2.5} />
-          <Text style={{ color: COLORS.white, fontSize: 28, fontWeight: '700', marginLeft: 12 }}>
-            画像を選択
-          </Text>
+        <View style={{ maxWidth: 1200, alignSelf: 'center', width: '100%' }}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
+          >
+            <ArrowLeft color={COLORS.white} size={24} strokeWidth={2.5} />
+            <Text style={{ color: COLORS.white, fontSize: 18, marginLeft: 8, fontWeight: '600' }}>戻る</Text>
+          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <ImageIcon color={COLORS.white} size={28} strokeWidth={2.5} />
+            <Text style={{ color: COLORS.white, fontSize: 28, fontWeight: '700', marginLeft: 12 }}>
+              画像を選択
+            </Text>
+          </View>
         </View>
       </View>
 
       {/* Gallery Grid */}
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 24 }}>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 24, alignItems: 'center' }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: gap, maxWidth: 1200, width: '100%' }}>
           {LOCAL_IMAGES.map((image) => (
             <TouchableOpacity
               key={image.id}
@@ -113,7 +128,7 @@ export default function LocalGallery({ navigation }) {
                 paddingVertical: 8,
                 paddingHorizontal: 8
               }}>
-                <Text style={{ color: COLORS.white, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
+                <Text style={{ color: COLORS.white, fontSize: 14, fontWeight: '600', textAlign: 'center' }} numberOfLines={1}>
                   {image.name}
                 </Text>
               </View>

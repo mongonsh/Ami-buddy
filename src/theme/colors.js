@@ -4,7 +4,7 @@ export const COLORS = {
   secondary: '#EF4444',    // Bold Red
   accent: '#F97316',       // Energetic Orange
   white: '#FFFFFF',        // Pure White
-  
+
   // Shades for depth
   blue: {
     50: '#EFF6FF',
@@ -27,7 +27,17 @@ export const COLORS = {
     600: '#EA580C',
     700: '#C2410C',
   },
-  
+  green: {
+    50: '#ECFDF5',
+    100: '#D1FAE5',
+    500: '#10B981',
+    600: '#059669',
+    700: '#047857',
+  },
+
+  // Custom
+  navy: '#1E3A8A', // Deep Blue
+
   // Neutrals
   gray: {
     50: '#F9FAFB',
@@ -41,13 +51,13 @@ export const COLORS = {
     800: '#1F2937',
     900: '#111827',
   },
-  
+
   // Semantic colors
   success: '#10B981',
   warning: '#F59E0B',
   error: '#EF4444',
   info: '#2563EB',
-  
+
   // Legacy (for backward compatibility)
   brightBlue: '#2563EB',
   sunnyYellow: '#F59E0B',

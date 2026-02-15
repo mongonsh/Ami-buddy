@@ -90,10 +90,10 @@ async function getBase64FromUri(uri: string): Promise<{ base64: string; mimeType
   }
 }
 
-export async function analyzeHomeworkWithGemini(imageUri: string): Promise<GeminiResponse> {
+export async function analyzeHomeworkWithGemini(imageUri: string, locale: string = 'jp'): Promise<GeminiResponse> {
   try {
-    const apiKey = Constants.expoConfig?.extra?.GEMINI_API_KEY;
-    
+    const apiKey = Constants.expoConfig?.extra?.GEMINI_API_KEY || process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+
     if (!apiKey) {
       throw new Error('Gemini API key not found');
     }
@@ -101,26 +101,32 @@ export async function analyzeHomeworkWithGemini(imageUri: string): Promise<Gemin
     // Get base64 and MIME type
     const { base64, mimeType } = await getBase64FromUri(imageUri);
 
-    const prompt = `この宿題の画像を分析して、以下のJSON形式で返してください：
-
-{
-  "description": "宿題の内容を子供向けに2文で説明",
-  "topics": ["トピック1", "トピック2"],
-  "difficulty": "かんたん"
-}
-
-JSONのみを返してください。説明文は含めないでください。`;
-
     // Initialize Google Generative AI
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
+    const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: 0.4,
-        maxOutputTokens: 2048
       }
     });
+
+    const prompt = locale === 'en'
+      ? `Analyze this homework image for a young student.
+         Provide a JSON response with:
+         - description: A short, encouraging summary of what the homework is about (in simple English).
+         - topics: A list of key topics found (e.g., "Addition", "Kanji").
+         - difficulty: estimated difficulty ("Easy", "Medium", "Hard").
+         Keep the tone friendly and encouraging.
+         
+         Return ONLY valid JSON.`
+      : `この宿題の画像を子供向けに分析してください。
+         以下のJSON形式で返してください：
+         - description: 宿題の内容についての短く励ますような説明（やさしい日本語で）。
+         - topics: 見つかった主要なトピックのリスト（例：「たしざん」、「かんじ」）。
+         - difficulty: 推定される難易度（「かんたん」、「ふつう」、「むずかしい」）。
+         親しみやすく、励ますような口調にしてください。
+         
+         JSONのみを返してください。`;
 
     const result = await model.generateContent([
       prompt,
@@ -134,57 +140,57 @@ JSONのみを返してください。説明文は含めないでください。`
 
     const response = await result.response;
     const text = response.text();
-    
+
     console.log('Gemini response text:', text);
-    
+
     // Clean up markdown if present
     let cleanText = text.trim();
     cleanText = cleanText.replace(/```json\s*/g, '');
     cleanText = cleanText.replace(/```\s*/g, '');
     cleanText = cleanText.trim();
-    
+
     // Try to fix incomplete JSON
     if (cleanText && !cleanText.endsWith('}')) {
       const openBraces = (cleanText.match(/{/g) || []).length;
       const closeBraces = (cleanText.match(/}/g) || []).length;
       const missingBraces = openBraces - closeBraces;
-      
+
       if (missingBraces > 0) {
         console.log(`Adding ${missingBraces} missing closing braces`);
         cleanText += '}'.repeat(missingBraces);
       }
     }
-    
+
     console.log('Cleaned text:', cleanText);
-    
+
     try {
       const parsed = JSON.parse(cleanText);
-      
+
       // Validate required fields
       if (!parsed.description) {
-        parsed.description = 'この宿題を見ました。がんばってね！';
+        parsed.description = locale === 'en' ? 'I saw your homework. Good job!' : 'この宿題を見ました。がんばってね！';
       }
       if (!parsed.topics || !Array.isArray(parsed.topics)) {
-        parsed.topics = ['宿題'];
+        parsed.topics = [locale === 'en' ? 'Homework' : '宿題'];
       }
       if (!parsed.difficulty) {
-        parsed.difficulty = 'ふつう';
+        parsed.difficulty = locale === 'en' ? 'Medium' : 'ふつう';
       }
-      
+
       return parsed;
     } catch (e) {
       console.error('JSON parse error:', e);
-      
+
       // Try to extract fields manually
       const descMatch = cleanText.match(/"description"\s*:\s*"([^"]+)"/);
       const topicsMatch = cleanText.match(/"topics"\s*:\s*\[(.*?)\]/);
       const difficultyMatch = cleanText.match(/"difficulty"\s*:\s*"([^"]+)"/);
-      
-      const description = descMatch ? descMatch[1] : 'この宿題を見ました。がんばってね！';
+
+      const description = descMatch ? descMatch[1] : (locale === 'en' ? 'Good job on your homework!' : 'この宿題を見ました。がんばってね！');
       const topicsStr = topicsMatch ? topicsMatch[1] : '';
-      const topics = topicsStr ? topicsStr.split(',').map(t => t.replace(/"/g, '').trim()).filter(Boolean) : ['宿題'];
-      const difficulty = difficultyMatch ? difficultyMatch[1] : 'ふつう';
-      
+      const topics = topicsStr ? topicsStr.split(',').map(t => t.replace(/"/g, '').trim()).filter(Boolean) : [locale === 'en' ? 'Homework' : '宿題'];
+      const difficulty = difficultyMatch ? difficultyMatch[1] : (locale === 'en' ? 'Medium' : 'ふつう');
+
       return {
         description,
         topics,
@@ -199,8 +205,8 @@ JSONのみを返してください。説明文は含めないでください。`
 
 export async function reviewHomeworkWithGemini(imageUri: string, originalHomework: string): Promise<ReviewResponse> {
   try {
-    const apiKey = Constants.expoConfig?.extra?.GEMINI_API_KEY;
-    
+    const apiKey = Constants.expoConfig?.extra?.GEMINI_API_KEY || process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+
     if (!apiKey) {
       throw new Error('Gemini API key not found');
     }
@@ -229,7 +235,7 @@ JSONのみを返してください。説明文は含めないでください。`
 
     // Initialize Google Generative AI
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
+    const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
       generationConfig: {
         responseMimeType: 'application/json',
@@ -250,29 +256,29 @@ JSONのみを返してください。説明文は含めないでください。`
 
     const response = await result.response;
     const text = response.text();
-    
+
     console.log('Gemini review response:', text);
-    
+
     // Clean up markdown if present
     let cleanText = text.trim();
     cleanText = cleanText.replace(/```json\s*/g, '');
     cleanText = cleanText.replace(/```\s*/g, '');
     cleanText = cleanText.trim();
-    
+
     // Try to fix incomplete JSON
     if (cleanText && !cleanText.endsWith('}')) {
       const openBraces = (cleanText.match(/{/g) || []).length;
       const closeBraces = (cleanText.match(/}/g) || []).length;
       const missingBraces = openBraces - closeBraces;
-      
+
       if (missingBraces > 0) {
         cleanText += '}'.repeat(missingBraces);
       }
     }
-    
+
     try {
       const parsed = JSON.parse(cleanText);
-      
+
       // Validate required fields
       if (typeof parsed.score !== 'number') {
         parsed.score = 80;
@@ -289,11 +295,11 @@ JSONのみを返してください。説明文は含めないでください。`
       if (!parsed.sticker) {
         parsed.sticker = parsed.score >= 90 ? '🌟' : parsed.score >= 70 ? '⭐' : '👏';
       }
-      
+
       return parsed;
     } catch (e) {
       console.error('JSON parse error:', e);
-      
+
       // Return default review
       return {
         score: 80,

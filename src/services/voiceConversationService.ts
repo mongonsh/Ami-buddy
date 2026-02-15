@@ -13,19 +13,19 @@ interface ConversationMessage {
 }
 
 // Convert audio to text using Google Generative AI SDK
-export async function transcribeAudioWithGemini(audioUri: string): Promise<string> {
+export async function transcribeAudioWithGemini(audioUri: string, locale: string = 'jp'): Promise<string> {
   try {
     const apiKey = Constants.expoConfig?.extra?.GEMINI_API_KEY;
-    
+
     if (!apiKey) {
       console.warn('No Gemini API key, using placeholder');
-      return 'この問題はどうやって解きますか？';
+      return locale === 'en' ? 'How do I solve this?' : 'この問題はどうやって解きますか？';
     }
 
-    console.log('Transcribing audio with Gemini SDK...');
+    console.log('Transcribing audio with Gemini SDK...', locale);
 
     let audioData: string;
-    
+
     if (isWeb) {
       // Web: Convert blob URL to base64
       const response = await fetch(audioUri);
@@ -44,8 +44,12 @@ export async function transcribeAudioWithGemini(audioUri: string): Promise<strin
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
+    const prompt = locale === 'en'
+      ? 'Please transcribe the audio into English. return only the transcription. No explanation.'
+      : '音声を聞いて、日本語で文字起こししてください。質問の内容だけを返してください。説明は不要です。';
+
     const result = await model.generateContent([
-      '音声を聞いて、日本語で文字起こししてください。質問の内容だけを返してください。説明は不要です。',
+      prompt,
       {
         inlineData: {
           mimeType: isWeb ? 'audio/webm' : 'audio/mp4',
@@ -56,17 +60,17 @@ export async function transcribeAudioWithGemini(audioUri: string): Promise<strin
 
     const response = await result.response;
     const transcript = response.text().trim();
-    
+
     if (transcript) {
       console.log('Gemini transcribed:', transcript);
       return transcript;
     }
-    
+
     console.warn('No transcript from Gemini, using placeholder');
-    return 'この問題はどうやって解きますか？';
+    return locale === 'en' ? 'How do I solve this?' : 'この問題はどうやって解きますか？';
   } catch (error) {
     console.error('Gemini transcription error:', error);
-    return 'この問題はどうやって解きますか？';
+    return locale === 'en' ? 'How do I solve this?' : 'この問題はどうやって解きますか？';
   }
 }
 
@@ -74,11 +78,12 @@ export async function transcribeAudioWithGemini(audioUri: string): Promise<strin
 export async function getConversationResponse(
   question: string,
   homeworkContext: string,
-  conversationHistory: ConversationMessage[]
+  conversationHistory: ConversationMessage[],
+  locale: string = 'jp'
 ): Promise<string> {
   try {
     const apiKey = Constants.expoConfig?.extra?.GEMINI_API_KEY;
-    
+
     if (!apiKey) {
       throw new Error('Gemini API key not found');
     }
@@ -88,11 +93,17 @@ export async function getConversationResponse(
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     // Build conversation context
-    const contextPrompt = `あなたは子供の宿題を手伝う優しい先生です。
-宿題の内容: ${homeworkContext}
-
-子供の質問に対して、わかりやすく、優しく答えてください。
-答えは2-3文で簡潔にしてください。`;
+    const contextPrompt = locale === 'en'
+      ? `You are a friendly teacher helping a child with homework.
+         Homework context: ${homeworkContext}
+         
+         Answer the child's question simply and kindly.
+         Keep answers short (2-3 sentences).`
+      : `あなたは子供の宿題を手伝う優しい先生です。
+         宿題の内容: ${homeworkContext}
+         
+         子供の質問に対して、わかりやすく、優しく答えてください。
+         答えは2-3文で簡潔にしてください。`;
 
     // Start chat with history
     const chat = model.startChat({
@@ -115,7 +126,7 @@ export async function getConversationResponse(
     const result = await chat.sendMessage(question);
     const response = await result.response;
     const answer = response.text().trim() || 'ごめんね、わかりませんでした。';
-    
+
     return answer;
   } catch (error) {
     console.error('Conversation error:', error);
@@ -127,7 +138,7 @@ export async function getConversationResponse(
 export async function startRecording(): Promise<Audio.Recording> {
   try {
     await configureAudio();
-    
+
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') {
       throw new Error('Microphone permission not granted');
