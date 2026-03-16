@@ -68,7 +68,9 @@ class Auth,Firestore,Storage firebase;
 
 ### 1. Character Creation ("Live Animation" Pipeline)
 
-This is the process of generating a moving character from a doodle. **Gemini** identifies the skeleton, and **SAM 2** cuts out the parts. ```mermaid
+This is the process of generating a moving character from a doodle. **Gemini** identifies the skeleton, and **SAM 2** cuts out the parts. 
+
+```mermaid
 sequenceDiagram
 participant User as 👤 User
 participant API as 🚀 Backend API
